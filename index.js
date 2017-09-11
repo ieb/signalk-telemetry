@@ -1,6 +1,10 @@
+/*jshint node:true */
+"use strict";
+
 const Bacon = require('baconjs');
 const path = require('path')
 const fs = require('fs')
+const Metrics = require('./process').Metrics;
 
 module.exports = function(app) {
 
@@ -50,65 +54,66 @@ module.exports = function(app) {
   };
 
 
+  var loadBackends = function(app, plugin) {
+    fpath = path.join(__dirname, 'backends')
+    files = fs.readdirSync(fpath).filter(function(f) {
+      return f.endsWith('.js');
+    });
+    return files.map(fname => {
+      var backendDriver = path.basename(fname, '.js')
+      var sobj = require(path.join(fpath, backendDriver));
+      if ( sobj !== undefined ) {
+         sobj.optionKey = backendDriver; 
+      }
+      return sobj;
+    }).filter(backend => { return typeof backend !== 'undefined' && typeof backend.schema !== 'undefined' });
+  }
 
 
 
 
-
-  plugin.id = "sk-to-csv"
-  plugin.name = "Log Signal K to CSV"
-  plugin.description = "Plugin to log Signal K to CSV"
+  plugin.id = "sk-telemetry"
+  plugin.name = "Signal K Telemetry"
+  plugin.description = "Plugin Output SignalK data as metrics Telemetry"
 
   plugin.schema = {
     type: "object",
-    title: "Conversions to CSV",
-    description: "Save SignalK keys to a CSV file, one line every 2 seconds.",
-    properties: {}
+    title: "Emits SignalK Telemetry data",
+    description: "Emits SignalK Data as telemety or the configured backend target.",
+    properties: {
+    }
   }
   
   plugin.start = function(options) {
-    const selfContext = 'vessels.' + app.selfId
-    const selfMatcher = (delta) => delta.context && delta.context === selfContext
 
-    function mapLogger(keys) {
-      const selfStreams = keys.map(app.streambundle.getSelfStream, app.streambundle);
-      const debounce = 2000;
-      const ttl = 2000;
-      var nextOutput = 0;
-      console.log("Subscribing to ",keys, selfStreams);
-      plugin.unsubscribes.push(Bacon.mergeAll(selfStreams)
-        .subscribe(function sub(events) {
-        console.log("Logger Got",events);
-      }));
+    console.log("Opionts ",options);
+
+    var activeBackends = [];
+    for (var i = 0; i < plugin.backends.length; i++) {
+      var backend = plugin.backends[i];
+      if ( options[backend.optionKey].enabled !== undefined && options[backend.optionKey].enabled ) {
+          activeBackends.push(new backend.Backend(options[backend.optionKey]));
+      }
     }
 
-    var current = [];
 
-
-
+    plugin.metrics = new Metrics(activeBackends);
 
     function combine(sentence) {
-      current[sentence.id] = 0;
        plugin.unsubscribes.push(app.streambundle.getSelfStream(sentence.key).onValue(value => {
-            current[sentence.id] = value;
+          plugin.metrics.updateGuage(sentence.optionKey, value);
         }));
     }
-    plugin.columns = [];
-    plugin.columns[0] = 'ts';
+
+
     // subscribe to each active stream to accumulate the current value.
-    var idx = 1;
     for (var i = plugin.sentences.length - 1; i >= 0; i--) {
         var sentence = plugin.sentences[i];
         if ( options[sentence.optionKey]) {
-          sentence.id = idx;
-
-          plugin.columns[sentence.id] = sentence.optionKey;
-          idx++;
           combine(sentence);
         }
     };
 
-    plugin.logger = new Logger("../signalklogs/lunalog-",plugin.columns.join(','));
 
 
     plugin.running = true;
@@ -116,21 +121,17 @@ module.exports = function(app) {
     // create an event stream to emit the current value every 2s.
     var outputStream = Bacon.fromPoll(2000, function() {
       if ( plugin.running ) {
-        return Bacon.Next(current);
+        console.log("tick");
+        return Bacon.Next(new Date());
       } else {
         return Bacon.End();
       }
     });
 
-    // subscribe to that stream to perform the output.
-    plugin.unsubscribes.push(outputStream.subscribe(values => {
-      current[0] = new Date().getTime();
-      var output = [];
-      output[0] = current[0];
-      for (var i = 1; i < current.length; i++) {
-        output[i] = current[i].toPrecision(4);
-      };
-      plugin.logger.log(output.join(","));
+    // subscribe to that stream to flush metrics periodically.
+    plugin.unsubscribes.push(outputStream.subscribe(m => {
+      console.log("toc");
+      plugin.metrics.flush(2000);
     }));
 
   }
@@ -138,7 +139,9 @@ module.exports = function(app) {
   plugin.stop = function() {
     plugin.running = false;
     plugin.unsubscribes.forEach(f => f());
-    plugin.logger.close();
+    if ( plugin.metrics !== undefined ) {
+       plugin.metrics.close();
+    }
   }
 
 
@@ -261,6 +264,16 @@ module.exports = function(app) {
      }
 
   ];
+
+  plugin.backends = loadBackends();
+  for (var i = 0; i < plugin.backends.length; ++i) {
+    var backend = plugin.backends[i];
+    plugin.schema.properties[backend.optionKey] =  {
+      type: 'object',
+      title: backend.title,
+      properties : backend.schema
+    }
+  }
 
   //===========================================================================
   for (var i = plugin.sentences.length - 1; i >= 0; i--) {

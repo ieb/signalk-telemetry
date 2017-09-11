@@ -5,8 +5,11 @@
    The version in statsD assumes it is the only module in node, and uses globals,
    this has been refactored to a module */
 
+
 module.exports = (function() {
 
+
+    var net = require('net');
 
 
     // Minimally necessary pickle opcodes.
@@ -33,7 +36,7 @@ module.exports = (function() {
         return this.key + " " + this.value + " " + this.ts;
     };
 
-    Metric.prototype..toPickle = function() {
+    Metric.prototype.toPickle = function() {
         return MARK + STRING + '\'' + this.key + '\'\n' + MARK + LONG + this.ts + 'L\n' + STRING + '\'' + this.value + '\'\n' + TUPLE + TUPLE + APPEND;
     };
 
@@ -66,126 +69,204 @@ module.exports = (function() {
         return buf;
     };
 
-    function Backend(startup_time, config, logger) {
-      debug = config.debug;
-      l = logger;
-      graphiteHost = config.graphiteHost;
-      graphitePort = config.graphitePort || 2003;
-      graphitePicklePort = config.graphitePicklePort || 2004;
-      graphiteProtocol = config.graphiteProtocol || 'text';
-      config.graphite = config.graphite || {};
-      globalPrefix    = config.graphite.globalPrefix;
-      prefixCounter   = config.graphite.prefixCounter;
-      prefixTimer     = config.graphite.prefixTimer;
-      prefixGauge     = config.graphite.prefixGauge;
-      prefixSet       = config.graphite.prefixSet;
-      globalSuffix    = config.graphite.globalSuffix;
-      legacyNamespace = config.graphite.legacyNamespace;
-      prefixStats     = config.prefixStats;
+    // this gets inserted into the schema.
+    var configschema = {
+      enabled: {
+        title: 'Enabled',
+        type: 'boolean',
+        default: false
+      },
+      pickle: {
+        title : "Use Pickle",
+        type: "boolean",
+        default: true
+      },
+      debug : {
+        title: "Debug Connection",
+        type: "boolean",
+        default: false
+      },
+      host : {
+        title: "Host",
+        type: "string",
+        default: "localhost"
+      },
+      textport: {
+        title: "Text port",
+        type: "number",
+        default: 2003
+      },
+      pickleport: {
+        title: "Pickle port",
+        type: "number",
+        default: 2004
+      },
+      prefixes: {
+        title: 'Metrics prefixes',
+        type: 'object',
+        properties: {
+           globalPrefix : {
+              title: 'Global Prefix',
+              type: 'string',
+              default: 'stats'
+           },
+           prefixCounter : {
+              title: 'Counter Prefix',
+              type: 'string',
+              default: 'counters'
+           },
+           prefixTimer : {
+              title: 'Timer Prefix',
+              type: 'string',
+              default: 'timers'
+           },
+           prefixGauge : {
+              title: 'Guage Prefix',
+              type: 'string',
+              default: 'guages'
+           },
+           prefixSet : {
+              title: 'Set Prefix',
+              type: 'string',
+              default: 'sets'
+           },
+           globalSuffix : {
+              title: 'Global Suffix',
+              type: 'string',
+              default: ''
+           },
+           legacyNamespace : {
+              title: 'Legacy Namespace',
+              type: 'boolean',
+              default: false
+           },
+           prefixStats : {
+              title: 'Stats Prefix',
+              type: 'string',
+              default: 'stats'
+           }
+        }
+      }
 
-      // set defaults for prefixes & suffix
-      globalPrefix  = globalPrefix !== undefined ? globalPrefix : "stats";
-      prefixCounter = prefixCounter !== undefined ? prefixCounter : "counters";
-      prefixTimer   = prefixTimer !== undefined ? prefixTimer : "timers";
-      prefixGauge   = prefixGauge !== undefined ? prefixGauge : "gauges";
-      prefixSet     = prefixSet !== undefined ? prefixSet : "sets";
-      prefixStats   = prefixStats !== undefined ? prefixStats : "statsd";
-      legacyNamespace = legacyNamespace !== undefined ? legacyNamespace : true;
+
+    }
+
+
+    function Backend(config) {
+      console.log("Creating backend with ",config);
+      var prefixes = config.prefixes;
+      this.config = config;
+      this.globalNamespace = [];
+      this.counterNamespace = [];
+      this.timerNamespace = [];
+      this.gaugesNamespace = [];
+      this.setsNamespace = [];
 
       // In order to unconditionally add this string, it either needs to be an
       // empty string if it was unset, OR prefixed by a . if it was set.
-      globalSuffix  = globalSuffix !== undefined ? '.' + globalSuffix : '';
+      this.globalSuffix  = prefixes.globalSuffix !== undefined ? '.' + prefixes.globalSuffix : '';
 
-      if (legacyNamespace === false) {
-        if (globalPrefix !== "") {
-          globalNamespace.push(globalPrefix);
-          counterNamespace.push(globalPrefix);
-          timerNamespace.push(globalPrefix);
-          gaugesNamespace.push(globalPrefix);
-          setsNamespace.push(globalPrefix);
+      if (this.config.prefixes.legacyNamespace === false) {
+        if (this.globalPrefix !== "") {
+          this.globalNamespace.push(this.globalPrefix);
+          this.counterNamespace.push(this.globalPrefix);
+          this.timerNamespace.push(this.globalPrefix);
+          this.gaugesNamespace.push(this.globalPrefix);
+          this.setsNamespace.push(this.globalPrefix);
         }
 
-        if (prefixCounter !== "") {
-          counterNamespace.push(prefixCounter);
+        if (prefixes.prefixCounter !== "") {
+          this.counterNamespace.push(prefixes.prefixCounter);
         }
-        if (prefixTimer !== "") {
-          timerNamespace.push(prefixTimer);
+        if (prefixes.prefixTimer !== "") {
+          this.timerNamespace.push(prefixes.prefixTimer);
         }
-        if (prefixGauge !== "") {
-          gaugesNamespace.push(prefixGauge);
+        if (prefixes.prefixGauge !== "") {
+          this.gaugesNamespace.push(prefixes.prefixGauge);
         }
-        if (prefixSet !== "") {
-          setsNamespace.push(prefixSet);
+        if (prefixes.prefixSet !== "") {
+          this.setsNamespace.push(prefixes.prefixSet);
         }
       } else {
-          globalNamespace = ['stats'];
-          counterNamespace = ['stats'];
-          timerNamespace = ['stats', 'timers'];
-          gaugesNamespace = ['stats', 'gauges'];
-          setsNamespace = ['stats', 'sets'];
+          this.globalNamespace = ['stats'];
+          this.counterNamespace = ['stats'];
+          this.timerNamespace = ['stats', 'timers'];
+          this.gaugesNamespace = ['stats', 'gauges'];
+          this.setsNamespace = ['stats', 'sets'];
       }
 
-      graphiteStats.last_flush = startup_time;
-      graphiteStats.last_exception = startup_time;
-      graphiteStats.flush_time = 0;
-      graphiteStats.flush_length = 0;
+      this.last_flush = 0;
+      this.last_exception = 0;
+      this.flush_time = 0;
+      this.flush_length = 0;
 
-      if (config.keyNameSanitize !== undefined) {
-        globalKeySanitize = config.keyNameSanitize;
+      if (this.config.keyNameSanitize !== undefined) {
+        this.globalKeySanitize = this.config.keyNameSanitize;
       }
 
-      flushInterval = config.flushInterval;
+      this.flushInterval = config.flushInterval;
 
-      flush_counts = typeof(config.flush_counts) === "undefined" ? true : config.flush_counts;
+      this.flush_counts = typeof(this.config.flush_counts) === "undefined" ? true : this.config.flush_counts;
 
 
       return this;
     }
 
-    Backend.prototype._post_stats = function(first_argument) {
-      var last_flush = graphiteStats.last_flush || 0;
-      var last_exception = graphiteStats.last_exception || 0;
-      var flush_time = graphiteStats.flush_time || 0;
-      var flush_length = graphiteStats.flush_length || 0;
+    Backend.prototype.close = function() {
+      // release resources.
+    };
 
-      if (graphiteHost) {
+    Backend.prototype._post_stats = function(ts, stats) {
+      var self = this;
+      var last_flush = this.last_flush || 0;
+      var last_exception = this.last_exception || 0;
+      var flush_time = this.flush_time || 0;
+      var flush_length = this.flush_length || 0;
+
+      if (this.config.host) {
         try {
-          var port = graphiteProtocol == 'pickle' ? graphitePicklePort : graphitePort;
-          var graphite = net.createConnection(port, graphiteHost);
+          var port = this.config.pickle?this.config.pickleport:this.config.textport;
+          console.log("Posting to ",this.config.host, port);
+          var graphite = net.createConnection(port, this.config.host);
           graphite.addListener('error', function(connectionException){
-            if (debug) {
-              l.log(connectionException);
+            console.log("Error ", connectionException);
+            if (self.debug) {
+              console.error(connectionException);
             }
           });
           graphite.on('connect', function() {
+            console.log("Connected");
             var ts = Math.round(Date.now() / 1000);
-            var namespace = globalNamespace.concat(prefixStats).join(".");
-            stats.add(namespace + '.graphiteStats.last_exception' + globalSuffix, last_exception, ts);
-            stats.add(namespace + '.graphiteStats.last_flush'     + globalSuffix, last_flush    , ts);
-            stats.add(namespace + '.graphiteStats.flush_time'     + globalSuffix, flush_time    , ts);
-            stats.add(namespace + '.graphiteStats.flush_length'   + globalSuffix, flush_length  , ts);
-            var stats_payload = graphiteProtocol == 'pickle' ? stats.toPickle() : stats.toText();
+            var namespace = self.globalNamespace.concat(self.config.prefixes.prefixStats).join(".");
+            var globalSuffix = self.config.prefixes.globalSuffix;
+            stats.add(namespace + '.graphiteStats.last_exception' + globalSuffix, self.last_exception, ts);
+            stats.add(namespace + '.graphiteStats.last_flush'     + globalSuffix, self.last_flush    , ts);
+            stats.add(namespace + '.graphiteStats.flush_time'     + globalSuffix, self.flush_time    , ts);
+            stats.add(namespace + '.graphiteStats.flush_length'   + globalSuffix, self.flush_length  , ts);
+            var stats_payload = self.config.pickle ? stats.toPickle() : stats.toText();
 
             var starttime = Date.now();
+            console.log("Payload ", stats_payload);
             this.write(stats_payload);
             this.end();
 
-            graphiteStats.flush_time = (Date.now() - starttime);
-            graphiteStats.flush_length = stats_payload.length;
-            graphiteStats.last_flush = Math.round(Date.now() / 1000);
+            self.flush_time = (Date.now() - starttime);
+            self.flush_length = stats_payload.length;
+            self.last_flush = Math.round(Date.now() / 1000);
           });
         } catch(e){
-          if (debug) {
-            l.log(e);
+          console.log("Error ",e);
+          if (this.debug) {
+            console.error(e);
           }
-          graphiteStats.last_exception = Math.round(Date.now() / 1000);
+          this.last_exception = Math.round(Date.now() / 1000);
         }
       }
     };
 
     Backend.prototype._sk = function(key) {
         // Sanitize key for graphite if not done globally
-        if (globalKeySanitize) {
+        if (this.globalKeySanitize) {
           return key;
         } else {
           return key.replace(/\s+/g, '_')
@@ -206,6 +287,8 @@ module.exports = (function() {
       var counter_rates = metrics.counter_rates;
       var timer_data = metrics.timer_data;
       var statsd_metrics = metrics.statsd_metrics;
+      var globalSuffix = this.config.prefixes.globalSuffix;
+      var prefixStats = this.config.prefixes.prefixStats;
 
 
       // Flatten all the different types of metrics into a single
@@ -217,9 +300,10 @@ module.exports = (function() {
         var value = counters[key];
         var valuePerSecond = counter_rates[key]; // pre-calculated "per second" rate
         var keyName = sk(key);
-        var namespace = counterNamespace.concat(keyName);
+        var namespace = this.counterNamespace.concat(keyName);
 
-        if (legacyNamespace === true) {
+
+        if (this.legacyNamespace === true) {
           stats.add(namespace.join(".") + globalSuffix, valuePerSecond, ts);
           if (flush_counts) {
             stats.add('stats_counts.' + keyName + globalSuffix, value, ts);
@@ -235,7 +319,7 @@ module.exports = (function() {
       }
 
       for (key in timer_data) {
-        var namespace = timerNamespace.concat(sk(key));
+        var namespace = this.timerNamespace.concat(sk(key));
         var the_key = namespace.join(".");
 
         for (timer_data_key in timer_data[key]) {
@@ -255,25 +339,25 @@ module.exports = (function() {
       }
 
       for (key in gauges) {
-        var namespace = gaugesNamespace.concat(sk(key));
+        var namespace = this.gaugesNamespace.concat(sk(key));
         stats.add(namespace.join(".") + globalSuffix, gauges[key], ts);
         numStats += 1;
       }
 
       for (key in sets) {
-        var namespace = setsNamespace.concat(sk(key));
+        var namespace = this.setsNamespace.concat(sk(key));
         stats.add(namespace.join(".") + '.count' + globalSuffix, sets[key].size(), ts);
         numStats += 1;
       }
 
-      if (legacyNamespace === true) {
+      if (this.config.prefixes.legacyNamespace === true) {
         stats.add(prefixStats + '.numStats' + globalSuffix, numStats, ts);
         stats.add('stats.' + prefixStats + '.graphiteStats.calculationtime' + globalSuffix, (Date.now() - starttime), ts);
         for (key in statsd_metrics) {
           stats.add('stats.' + prefixStats + '.' + key + globalSuffix, statsd_metrics[key], ts);
         }
       } else {
-        var namespace = globalNamespace.concat(prefixStats);
+        var namespace = this.globalNamespace.concat(prefixStats);
         stats.add(namespace.join(".") + '.numStats' + globalSuffix, numStats, ts);
         stats.add(namespace.join(".") + '.graphiteStats.calculationtime' + globalSuffix, (Date.now() - starttime) , ts);
         for (key in statsd_metrics) {
@@ -281,9 +365,9 @@ module.exports = (function() {
           stats.add(the_key.join(".") + globalSuffix,+ statsd_metrics[key], ts);
         }
       }
-      post_stats(stats);
+      this._post_stats(ts, stats);
 
-      if (debug) {
+      if (this.debug) {
        l.log("numStats: " + numStats);
       }
     };
@@ -294,8 +378,12 @@ module.exports = (function() {
       }
     };
 
+
+
     return {
-        Backend : Backend
+        Backend : Backend,
+        title: 'Carbon Backend',
+        schema : configschema
     };
 
 }());

@@ -1,10 +1,11 @@
 /*jshint node:true */
+"use strict";
 /* based on https://github.com/etsy/statsd/blob/master/lib/process_metrics.js converted into a class and refactored a bit */
 
 module.exports = (function(){
 
 
-  function Metrics(backend){
+  function Metrics(backends){
     this.metrics = {
       counters: {},
       gauges: {},
@@ -16,12 +17,20 @@ module.exports = (function(){
       pctThreshold: {},
       histogram: []
     };
-    this.backend = backend;
+    this.backends = backends;
     return this;
   }
 
-  Metrics.prototype.flush = function(flushInterval, ts, callback) {
-    var starttime = Date.now();
+  Metrics.prototype.close = function() {
+    for (var i = 0; i < this.backends.length; i++) {
+      this.backends[i].close();
+    }
+  };
+
+  Metrics.prototype.flush = function(flushInterval) {
+    console.log("Flushing");
+    var ts = Date.now();
+    var starttime = ts;
     var key;
     var counter_rates = {};
     var timer_data = {};
@@ -161,11 +170,13 @@ module.exports = (function(){
     this.metrics.timer_data = timer_data;
     this.metrics.statsd_metrics = statsd_metrics;
 
-    this.backend.flush(this.metrics, callback);
+    for (var i = 0; i < this.backends.length; i++) {
+      this.backends[i].flush(ts, this.metrics);
+    }
   };
 
   return {
-    Metrics = Metrics;
+    Metrics : Metrics
   };
 }());
 
