@@ -14,45 +14,6 @@ module.exports = function(app) {
     unsubscribes: []
   };
 
-  var Logger = function(logBase, headerLine) {
-    this.logFileHour = undefined;
-    this._stream = undefined;
-    this.headerLine = headerLine+"\n";
-    this.logBase = logBase;
-  }
-
-  Logger.prototype.getLogFileName = function() {
-    var d = new Date();
-    return this.logBase + d.getUTCFullYear() + ("00"+(d.getUTCMonth()+1)).slice(-2)+("00"+d.getUTCDate()).slice(-2) + ("00"+ d.getUTCHours()).slice(-2) + ".csv";
-  };
-
-  Logger.prototype.log = function(message) {
-    var currentHour = new Date().getUTCHours();
-    if ( this.logFileHour !== currentHour) {
-      if ( this._stream !== undefined) {
-        this._stream.end();
-      }
-      var fname = this.getLogFileName();
-      var writeheader = true;
-      if ( fs.existsSync(fname) && fs.statSync(fname).size > 0) {
-        writeheader = false;
-      }
-      this._stream = fs.createWriteStream(fname, { flags: 'a' });
-      this.logFileHour = currentHour;
-      if (writeheader) {
-        this._stream.write(this.headerLine);
-      }
-    }
-    this._stream.write(message);
-    this._stream.write("\n")
-  };
-
-  Logger.prototype.close = function() {
-    if ( this._stream !== undefined) {
-        this._stream.end();
-    }
-  };
-
 
   var loadBackends = function(app, plugin) {
     fpath = path.join(__dirname, 'backends')
@@ -64,6 +25,8 @@ module.exports = function(app) {
       var sobj = require(path.join(fpath, backendDriver));
       if ( sobj !== undefined ) {
          sobj.optionKey = backendDriver; 
+      } else {
+        console.log("Failed to load backend ", backendDriver);
       }
       return sobj;
     }).filter(backend => { return typeof backend !== 'undefined' && typeof backend.schema !== 'undefined' });
@@ -86,13 +49,15 @@ module.exports = function(app) {
   
   plugin.start = function(options) {
 
-    console.log("Opionts ",options);
+    console.log("Options ",options, plugin.backends);
 
     var activeBackends = [];
     for (var i = 0; i < plugin.backends.length; i++) {
       var backend = plugin.backends[i];
-      if ( options[backend.optionKey].enabled !== undefined && options[backend.optionKey].enabled ) {
-          activeBackends.push(new backend.Backend(options[backend.optionKey]));
+      if ( options[backend.optionKey] !== undefined ) {
+        if ( options[backend.optionKey].enabled ) {
+          activeBackends.push(new backend.Backend(plugin, options, options[backend.optionKey]));
+        }
       }
     }
 
@@ -100,8 +65,13 @@ module.exports = function(app) {
     plugin.metrics = new Metrics(activeBackends);
 
     function combine(sentence) {
+      console.log("Subscribing to sentence ", sentence.key);
        plugin.unsubscribes.push(app.streambundle.getSelfStream(sentence.key).onValue(value => {
-          plugin.metrics.updateGuage(sentence.optionKey, value);
+          try {
+            plugin.metrics.update(sentence.key, sentence.toDisplayValue(value));
+          } catch (e) {
+            console.log(e);
+          }
         }));
     }
 
@@ -143,6 +113,47 @@ module.exports = function(app) {
        plugin.metrics.close();
     }
   }
+  var toDegreesRelative = function(v) {
+    var d = v*180/Math.PI;
+    var n = 0;
+    while ( d > 180 ) {
+      d = d - 360;
+    }
+    while ( d < -180 ) {
+      d = d + 360;
+    }
+    return d;
+
+  }
+  var toDegreesDirection = function(v) {
+    var d = v*180/Math.PI;
+    var n = 0;
+    while ( d > 360 ) {
+      d = d - 360;
+    }
+    while ( d < 0 ) {
+      d = d + 360;
+    }
+    return d;
+
+  }
+  var toKnots = function(v) {
+    return v*3600/1852.0; 
+  }
+  var toLattitude = function(v) {
+    return v;
+  }
+  var toLongitude = function(v) {
+    return v;
+  }
+  var toPercentage = function(v) {
+    return v*100;
+
+  }
+  var toMeters = function(v) {
+    return v;
+
+  }
 
 
 
@@ -150,117 +161,140 @@ module.exports = function(app) {
      {
         title: 'Aparent Wind Angle',
         optionKey: 'awa',
-        key: 'environment.wind.angleApparent' 
+        key: 'environment.wind.angleApparent',
+        toDisplayValue: toDegreesRelative
      },
      {
         title: 'Aparent Wind Speed',
         optionKey: 'aws',
-        key: 'environment.wind.speedApparent' 
+        key: 'environment.wind.speedApparent',
+        toDisplayValue: toKnots
      },
      {
         title: 'True Wind Angle',
         optionKey: 'twa',
-        key: 'environment.wind.angleTrue' 
+        key: 'environment.wind.angleTrue',
+        toDisplayValue: toDegreesRelative
      },
      {
         title: 'True Wind Speed',
         optionKey: 'tws',
-        key: 'environment.wind.speedTrue' 
+        key: 'environment.wind.speedTrue',
+        toDisplayValue: toKnots 
      },
      {
         title: 'True Wind Direction',
         optionKey: 'twd',
-        key: 'environment.wind.directionTrue' 
+        key: 'environment.wind.directionTrue',
+        toDisplayValue: toDegreesDirection 
      },
      {
         title: 'Ground Wind Angle',
         optionKey: 'gwa',
-        key: 'environment.wind.angleGroun' 
+        key: 'environment.wind.angleGround',
+        toDisplayValue: toDegreesRelative 
      },
      {
         title: 'Ground Wind Speed',
         optionKey: 'gws',
-        key: 'environment.wind.speedGround' 
+        key: 'environment.wind.speedGround',
+        toDisplayValue: toKnots 
      },
      {
         title: 'True Wind Direction',
         optionKey: 'gwd',
-        key: 'environment.wind.directionGround' 
+        key: 'environment.wind.directionGround',
+        toDisplayValue: toDegreesDirection 
      },
      {
         title: 'Course over Ground',
         optionKey: 'cog',
-        key: 'navigation.courseOverGround' 
+        key: 'navigation.courseOverGround',
+        toDisplayValue: toDegreesDirection 
      },
      {
         title: 'Speed over Ground',
         optionKey: 'sog',
-        key: 'navigation.speedOverGround' 
+        key: 'navigation.speedOverGround',
+        toDisplayValue: toKnots 
      },
      {
         title: 'Latitide',
         optionKey: 'lat',
-        key: 'environment.wind.speedApparent' 
+        key: 'environment.wind.speedApparent',
+        toDisplayValue: toLattitude 
      },
      {
         title: 'Longitude',
         optionKey: 'lon',
-        key: 'environment.wind.speedApparent' 
+        key: 'environment.wind.speedApparent',
+        toDisplayValue: toLongitude 
      },
      {
         title: 'Depth',
         optionKey: 'dbt',
-        key: 'environment.depth.belowTransducer' 
+        key: 'environment.depth.belowTransducer',
+        toDisplayValue: toMeters 
      },
      {
         title: 'Speed Through water',
         optionKey: 'stw',
-        key: 'navigation.speedThroughWater' 
+        key: 'navigation.speedThroughWater',
+        toDisplayValue: toKnots 
      },
      {
         title: 'Leeway',
         optionKey: 'lwy',
-        key: 'avigation.leeway' 
+        key: 'avigation.leeway',
+        toDisplayValue: toDegreesRelative
      },
      {
         title: 'Target Polar Speed',
         optionKey: 'tps',
-        key: 'performance.polarSpeed' 
+        key: 'performance.polarSpeed',
+        toDisplayValue: toKnots
      },
      {
         title: 'Polar performance ratio.',
         optionKey: 'ppr',
-        key: 'performance.polarSpeedRatio' 
+        key: 'performance.polarSpeedRatio',
+        toDisplayValue: toPercentage
      },
      {
         title: 'Optimal Heading on next tack',
         optionKey: 'oph',
-        key: 'performance.headingMagnetic' 
+        key: 'performance.headingMagnetic',
+        toDisplayValue: toDegreesDirection 
      },
      {
         title: 'Optimal True Wind Angle on this tack, for max VMG upwind or downwind',
         optionKey: 'otwa',
-        key: 'performance.targetAngle' 
+        key: 'performance.targetAngle',
+        toDisplayValue: toDegreesRelative 
      },
      {
         title: 'Target speed through water at optimal True Wind Angle on this tack, for max VMG upwind or downwind',
         optionKey: 'ostw',
-        key: 'performance.targetSpeed' 
+        key: 'performance.targetSpeed',
+        toDisplayValue: toKnots
      },
      {
         title: 'VMG achievable at polar speed on current true wind angle. ',
         optionKey: 'pvmg',
-        key: 'performance.polarVelocityMadeGood' 
+        key: 'performance.polarVelocityMadeGood',
+        toDisplayValue: toKnots 
      },
      {
         title: 'VMG achievable at polar speed on current true wind angle. ',
         optionKey: 'vmg',
-        key: 'performance.velocityMadeGood' 
+        key: 'performance.velocityMadeGood',
+        toDisplayValue: toKnots 
      },
      {
         title: 'VMG to Polar VM ratio ',
         optionKey: 'pvmgr',
-        key: 'performance.polarVelocityMadeGoodRatio' 
+        key: 'performance.polarVelocityMadeGoodRatio',
+        toDisplayValue: toPercentage 
      }
 
   ];

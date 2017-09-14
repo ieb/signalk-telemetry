@@ -81,119 +81,26 @@ module.exports = (function() {
         type: "boolean",
         default: true
       },
-      debug : {
-        title: "Debug Connection",
-        type: "boolean",
-        default: false
-      },
       host : {
         title: "Host",
         type: "string",
         default: "localhost"
-      },
-      textport: {
-        title: "Text port",
-        type: "number",
-        default: 2003
-      },
-      pickleport: {
-        title: "Pickle port",
-        type: "number",
-        default: 2004
-      },
-      prefixes: {
-        title: 'Metrics prefixes',
-        type: 'object',
-        properties: {
-           globalPrefix : {
-              title: 'Global Prefix',
-              type: 'string',
-              default: 'stats'
-           },
-           prefixCounter : {
-              title: 'Counter Prefix',
-              type: 'string',
-              default: 'counters'
-           },
-           prefixTimer : {
-              title: 'Timer Prefix',
-              type: 'string',
-              default: 'timers'
-           },
-           prefixGauge : {
-              title: 'Guage Prefix',
-              type: 'string',
-              default: 'guages'
-           },
-           prefixSet : {
-              title: 'Set Prefix',
-              type: 'string',
-              default: 'sets'
-           },
-           globalSuffix : {
-              title: 'Global Suffix',
-              type: 'string',
-              default: ''
-           },
-           legacyNamespace : {
-              title: 'Legacy Namespace',
-              type: 'boolean',
-              default: false
-           },
-           prefixStats : {
-              title: 'Stats Prefix',
-              type: 'string',
-              default: 'stats'
-           }
-        }
       }
-
-
     }
 
 
-    function Backend(config) {
+    function Backend(plugin, options, config) {
       console.log("Creating backend with ",config);
-      var prefixes = config.prefixes;
+      this.plugin = plugin;
       this.config = config;
-      this.globalNamespace = [];
-      this.counterNamespace = [];
-      this.timerNamespace = [];
-      this.gaugesNamespace = [];
-      this.setsNamespace = [];
+      this.config.pickle = this.config.pickle || true;
+      this.config.host = this.config.host || "localhost";
+      this.config.testport = this.config.testport || 2003;
+      this.config.pickleport = this.config.pickleport || 2004;
+
 
       // In order to unconditionally add this string, it either needs to be an
       // empty string if it was unset, OR prefixed by a . if it was set.
-      this.globalSuffix  = prefixes.globalSuffix !== undefined ? '.' + prefixes.globalSuffix : '';
-
-      if (this.config.prefixes.legacyNamespace === false) {
-        if (this.globalPrefix !== "") {
-          this.globalNamespace.push(this.globalPrefix);
-          this.counterNamespace.push(this.globalPrefix);
-          this.timerNamespace.push(this.globalPrefix);
-          this.gaugesNamespace.push(this.globalPrefix);
-          this.setsNamespace.push(this.globalPrefix);
-        }
-
-        if (prefixes.prefixCounter !== "") {
-          this.counterNamespace.push(prefixes.prefixCounter);
-        }
-        if (prefixes.prefixTimer !== "") {
-          this.timerNamespace.push(prefixes.prefixTimer);
-        }
-        if (prefixes.prefixGauge !== "") {
-          this.gaugesNamespace.push(prefixes.prefixGauge);
-        }
-        if (prefixes.prefixSet !== "") {
-          this.setsNamespace.push(prefixes.prefixSet);
-        }
-      } else {
-          this.globalNamespace = ['stats'];
-          this.counterNamespace = ['stats'];
-          this.timerNamespace = ['stats', 'timers'];
-          this.gaugesNamespace = ['stats', 'gauges'];
-          this.setsNamespace = ['stats', 'sets'];
-      }
 
       this.last_flush = 0;
       this.last_exception = 0;
@@ -203,11 +110,6 @@ module.exports = (function() {
       if (this.config.keyNameSanitize !== undefined) {
         this.globalKeySanitize = this.config.keyNameSanitize;
       }
-
-      this.flushInterval = config.flushInterval;
-
-      this.flush_counts = typeof(this.config.flush_counts) === "undefined" ? true : this.config.flush_counts;
-
 
       return this;
     }
@@ -226,7 +128,6 @@ module.exports = (function() {
       if (this.config.host) {
         try {
           var port = this.config.pickle?this.config.pickleport:this.config.textport;
-          console.log("Posting to ",this.config.host, port);
           var graphite = net.createConnection(port, this.config.host);
           graphite.addListener('error', function(connectionException){
             console.log("Error ", connectionException);
@@ -235,18 +136,14 @@ module.exports = (function() {
             }
           });
           graphite.on('connect', function() {
-            console.log("Connected");
             var ts = Math.round(Date.now() / 1000);
-            var namespace = self.globalNamespace.concat(self.config.prefixes.prefixStats).join(".");
-            var globalSuffix = self.config.prefixes.globalSuffix;
-            stats.add(namespace + '.graphiteStats.last_exception' + globalSuffix, self.last_exception, ts);
-            stats.add(namespace + '.graphiteStats.last_flush'     + globalSuffix, self.last_flush    , ts);
-            stats.add(namespace + '.graphiteStats.flush_time'     + globalSuffix, self.flush_time    , ts);
-            stats.add(namespace + '.graphiteStats.flush_length'   + globalSuffix, self.flush_length  , ts);
+            stats.add('stats.graphiteStats.last_exception', self.last_exception, ts);
+            stats.add('stats.graphiteStats.last_flush', self.last_flush    , ts);
+            stats.add('stats.graphiteStats.flush_time', self.flush_time    , ts);
+            stats.add('stats.graphiteStats.flush_length', self.flush_length  , ts);
             var stats_payload = self.config.pickle ? stats.toPickle() : stats.toText();
 
             var starttime = Date.now();
-            console.log("Payload ", stats_payload);
             this.write(stats_payload);
             this.end();
 
@@ -278,107 +175,19 @@ module.exports = (function() {
     Backend.prototype.flush = function(ts, metrics) {
       var starttime = Date.now();
       var numStats = 0;
-      var key;
-      var timer_data_key;
-      var counters = metrics.counters;
-      var gauges = metrics.gauges;
-      var timers = metrics.timers;
-      var sets = metrics.sets;
-      var counter_rates = metrics.counter_rates;
-      var timer_data = metrics.timer_data;
-      var statsd_metrics = metrics.statsd_metrics;
-      var globalSuffix = this.config.prefixes.globalSuffix;
-      var prefixStats = this.config.prefixes.prefixStats;
-
-
-      // Flatten all the different types of metrics into a single
-      // collection so we can allow serialization to either the graphite
-      // text and pickle formats.
       var stats = new Stats();
-
-      for (key in counters) {
-        var value = counters[key];
-        var valuePerSecond = counter_rates[key]; // pre-calculated "per second" rate
-        var keyName = sk(key);
-        var namespace = this.counterNamespace.concat(keyName);
-
-
-        if (this.legacyNamespace === true) {
-          stats.add(namespace.join(".") + globalSuffix, valuePerSecond, ts);
-          if (flush_counts) {
-            stats.add('stats_counts.' + keyName + globalSuffix, value, ts);
-          }
-        } else {
-          stats.add(namespace.concat('rate').join(".")  + globalSuffix, valuePerSecond, ts);
-          if (flush_counts) {
-            stats.add(namespace.concat('count').join(".") + globalSuffix, value, ts);
-          }
-        }
-
+      for (var key in metrics) {
+        stats.add(this._sk(key), metrics[key], ts);
         numStats += 1;
       }
-
-      for (key in timer_data) {
-        var namespace = this.timerNamespace.concat(sk(key));
-        var the_key = namespace.join(".");
-
-        for (timer_data_key in timer_data[key]) {
-          if (typeof(timer_data[key][timer_data_key]) === 'number') {
-            stats.add(the_key + '.' + timer_data_key + globalSuffix, timer_data[key][timer_data_key], ts);
-          } else {
-            for (var timer_data_sub_key in timer_data[key][timer_data_key]) {
-              if (debug) {
-                l.log(timer_data[key][timer_data_key][timer_data_sub_key].toString());
-              }
-              stats.add(the_key + '.' + timer_data_key + '.' + timer_data_sub_key + globalSuffix,
-                        timer_data[key][timer_data_key][timer_data_sub_key], ts);
-            }
-          }
-        }
-        numStats += 1;
-      }
-
-      for (key in gauges) {
-        var namespace = this.gaugesNamespace.concat(sk(key));
-        stats.add(namespace.join(".") + globalSuffix, gauges[key], ts);
-        numStats += 1;
-      }
-
-      for (key in sets) {
-        var namespace = this.setsNamespace.concat(sk(key));
-        stats.add(namespace.join(".") + '.count' + globalSuffix, sets[key].size(), ts);
-        numStats += 1;
-      }
-
-      if (this.config.prefixes.legacyNamespace === true) {
-        stats.add(prefixStats + '.numStats' + globalSuffix, numStats, ts);
-        stats.add('stats.' + prefixStats + '.graphiteStats.calculationtime' + globalSuffix, (Date.now() - starttime), ts);
-        for (key in statsd_metrics) {
-          stats.add('stats.' + prefixStats + '.' + key + globalSuffix, statsd_metrics[key], ts);
-        }
-      } else {
-        var namespace = this.globalNamespace.concat(prefixStats);
-        stats.add(namespace.join(".") + '.numStats' + globalSuffix, numStats, ts);
-        stats.add(namespace.join(".") + '.graphiteStats.calculationtime' + globalSuffix, (Date.now() - starttime) , ts);
-        for (key in statsd_metrics) {
-          var the_key = namespace.concat(key);
-          stats.add(the_key.join(".") + globalSuffix,+ statsd_metrics[key], ts);
-        }
-      }
+      stats.add('stats.numStats', numStats, ts);
+      stats.add('stats.graphiteStats.calculationtime', (Date.now() - starttime) , ts);
       this._post_stats(ts, stats);
 
       if (this.debug) {
        l.log("numStats: " + numStats);
       }
     };
-
-    Backend.prototype.status = function(writeCb) {
-      for (var stat in graphiteStats) {
-        writeCb(null, 'graphite', stat, graphiteStats[stat]);
-      }
-    };
-
-
 
     return {
         Backend : Backend,
