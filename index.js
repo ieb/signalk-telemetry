@@ -39,13 +39,6 @@ module.exports = function(app) {
   plugin.name = "Signal K Telemetry"
   plugin.description = "Plugin Output SignalK data as metrics Telemetry"
 
-  plugin.schema = {
-    type: "object",
-    title: "Emits SignalK Telemetry data",
-    description: "Emits SignalK Data as telemety or the configured backend target.",
-    properties: {
-    }
-  }
   
   plugin.start = function(options) {
 
@@ -86,28 +79,15 @@ module.exports = function(app) {
 
 
 
-    plugin.running = true;
 
-    // create an event stream to emit the current value every 2s.
-    var outputStream = Bacon.fromPoll(2000, function() {
-      if ( plugin.running ) {
-        console.log("tick");
-        return Bacon.Next(new Date());
-      } else {
-        return Bacon.End();
-      }
-    });
-
-    // subscribe to that stream to flush metrics periodically.
-    plugin.unsubscribes.push(outputStream.subscribe(m => {
-      console.log("toc");
+    plugin.interval = setInterval(function() {
       plugin.metrics.flush(2000);
-    }));
+    }, 2000);
 
   }
 
   plugin.stop = function() {
-    plugin.running = false;
+    clearInterval(plugin.interval);
     plugin.unsubscribes.forEach(f => f());
     if ( plugin.metrics !== undefined ) {
        plugin.metrics.close();
@@ -299,10 +279,41 @@ module.exports = function(app) {
 
   ];
 
+  plugin.schema = {
+    type: "object",
+    title: "Emits SignalK Telemetry data",
+    description: "Emits SignalK Data as telemety or the configured backend target.",
+    properties: {
+      sentences: {
+        type: "object",
+        title: "Sentences",
+        description: "Select sentences to capture",
+        properties: {
+        }
+      },
+      backends: {
+        type: "object",
+        title: "Backends",
+        description: "Enable and configure backends",
+        properties: {
+        }
+      }
+
+    }
+  }
+
+  plugin.uiSchema = {
+    "ui:order": [
+    'sentences',
+    'backends'
+    ]
+  };
+
+
   plugin.backends = loadBackends();
   for (var i = 0; i < plugin.backends.length; ++i) {
     var backend = plugin.backends[i];
-    plugin.schema.properties[backend.optionKey] =  {
+    plugin.schema.properties.backends.properties[backend.optionKey] =  {
       type: 'object',
       title: backend.title,
       properties : backend.schema
@@ -312,13 +323,14 @@ module.exports = function(app) {
   //===========================================================================
   for (var i = plugin.sentences.length - 1; i >= 0; i--) {
     var sentence = plugin.sentences[i];
-    plugin.schema.properties[sentence.optionKey] = {
+    plugin.schema.properties.sentences.properties[sentence.optionKey] = {
       title: sentence['title'],
       type: "boolean",
       default: false
     }
   };
   
+
 
   return plugin;
 }
