@@ -6,6 +6,7 @@ module.exports = (function(){
 
 
   function Metrics(backends){
+    console.log("Creating backends with ", backends);
     this.metrics = {};
     this.backends = backends;
     return this;

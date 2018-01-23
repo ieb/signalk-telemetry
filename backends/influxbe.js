@@ -39,7 +39,7 @@ module.exports = (function() {
 	    var idx = 1;
 	    for (var i = plugin.sentences.length - 1; i >= 0; i--) {
 	        var sentence = plugin.sentences[i];
-	        if ( options[sentence.optionKey]) {
+	        if ( options.sentences[sentence.optionKey]) {
 	          sentence.id = idx;
 	          this.fieldDef[sentence.key] = 'f';
 	          idx++;

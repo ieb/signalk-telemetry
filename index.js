@@ -41,15 +41,12 @@ module.exports = function(app) {
 
   
   plugin.start = function(options) {
-
-    console.log("Options ",options, plugin.backends);
-
     var activeBackends = [];
     for (var i = 0; i < plugin.backends.length; i++) {
       var backend = plugin.backends[i];
-      if ( options[backend.optionKey] !== undefined ) {
-        if ( options[backend.optionKey].enabled ) {
-          activeBackends.push(new backend.Backend(plugin, options, options[backend.optionKey]));
+      if ( options.backends[backend.optionKey] !== undefined ) {
+        if ( options.backends[backend.optionKey].enabled ) {
+          activeBackends.push(new backend.Backend(plugin, options, options.backends[backend.optionKey]));
         }
       }
     }
@@ -58,12 +55,12 @@ module.exports = function(app) {
     plugin.metrics = new Metrics(activeBackends);
 
     function combine(sentence) {
-      console.log("Subscribing to sentence ", sentence.key);
        plugin.unsubscribes.push(app.streambundle.getSelfStream(sentence.key).onValue(value => {
           try {
             plugin.metrics.update(sentence.key, sentence.toDisplayValue(value));
           } catch (e) {
             console.log(e);
+            console.log("Failed to update ", sentence);
           }
         }));
     }
@@ -72,7 +69,7 @@ module.exports = function(app) {
     // subscribe to each active stream to accumulate the current value.
     for (var i = plugin.sentences.length - 1; i >= 0; i--) {
         var sentence = plugin.sentences[i];
-        if ( options[sentence.optionKey]) {
+        if ( options.sentences[sentence.optionKey]) {
           combine(sentence);
         }
     };
@@ -135,6 +132,17 @@ module.exports = function(app) {
 
   }
 
+  var toMbar = function(v) {
+    return v / 100;
+  }
+
+  var toCelcius = function (v) {
+    return v - 273.15;
+  }
+
+  var toRelativeHumidity = function(v) {
+    return v;
+  }
 
 
   plugin.sentences = [
@@ -275,6 +283,90 @@ module.exports = function(app) {
         optionKey: 'pvmgr',
         key: 'performance.polarVelocityMadeGoodRatio',
         toDisplayValue: toPercentage 
+     },
+     {
+        title: 'Atmospheric Temperature ',
+        optionKey: 't',
+        key: 'environment.outside.temperature',
+        toDisplayValue: toCelcius 
+     },
+     {
+        title: 'Atmospheric Pressure ',
+        optionKey: 'p',
+        key: 'environment.outside.pressure',
+        toDisplayValue: toMbar 
+     },
+     {
+        title: 'Atmospheric Humidity ',
+        optionKey: 'rh',
+        key: 'environment.outside.humidity',
+        toDisplayValue: toRelativeHumidity
+     },
+     {
+        title: 'Inside Temperature ',
+        optionKey: 'ti',
+        key: 'environment.inside.temperature', 
+        toDisplayValue: toCelcius 
+     },
+     {
+        title: 'Rate of turn ',
+        optionKey: 'rturn',
+        key: 'environment.inside.temperature',
+        toDisplayValue: toDegreesRelative
+     },
+     {
+        title: 'Rate of roll ',
+        optionKey: 'rroll',
+        key: 'navigation.gyro.roll',
+        toDisplayValue: toDegreesRelative
+     },
+     {
+        title: 'Rate of pitch ',
+        optionKey: 'rpitch',
+        key: 'navigation.gyro.pitch', 
+        toDisplayValue: toDegreesRelative
+     },
+     {
+        title: 'Rate of yaw ',
+        optionKey: 'rpitch',
+        key: 'navigation.gyro.yaw',
+        toDisplayValue: toDegreesRelative
+     },
+     {
+        title: 'Accel x ',
+        optionKey: 'accelx',
+        key: 'navigation.accel.x', 
+        toDisplayValue: toMeters
+     },
+     {
+        title: 'Accel y ',
+        optionKey: 'accely',
+        key: 'navigation.accel.y' , 
+        toDisplayValue: toMeters
+     },
+     {
+        title: 'Accel z ',
+        optionKey: 'accelz',
+        key: 'navigation.accel.z', 
+        toDisplayValue: toMeters
+     },
+     {
+        title: 'Sensor Heading Magnetic ',
+        optionKey: 'shdm',
+        key: 'navigation.headingMagnetic',
+        toDisplayValue: toDegreesDirection
+     },
+     {
+        title: 'Roll ',
+        optionKey: 'roll',
+        key: 'navigation.attitude.roll',
+        toDisplayValue: toDegreesRelative
+     },
+     {
+        title: 'Pitch ',
+        optionKey: 'pitch',
+        key: 'navigation.attitude.pitch',
+        toDisplayValue: toDegreesRelative
      }
 
   ];

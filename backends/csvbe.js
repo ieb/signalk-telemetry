@@ -30,10 +30,11 @@ module.exports = (function() {
 	      var writeheader = true;
 	      if ( fs.existsSync(fname) && fs.statSync(fname).size > 0) {
 	        writeheader = false;
-	      }
+          }
 	      this._stream = fs.createWriteStream(fname, { flags: 'a' });
 	      this.logFileHour = currentHour;
 	      if (writeheader) {
+            console.log("Logging data to ", fname);
 	        this._stream.write(this.headerLine);
 	      }
 	    }
@@ -72,7 +73,7 @@ module.exports = (function() {
 	    var idx = 1;
 	    for (var i = 0; i  < plugin.sentences.length; i++) {
 	        var sentence = plugin.sentences[i];
-	        if ( options[sentence.optionKey]) {
+	        if ( options.sentences[sentence.optionKey]) {
 	          sentence.id = idx;
 	          this.columns[idx] = sentence.optionKey;
 	          this.columnkeys[idx] = sentence.key;
